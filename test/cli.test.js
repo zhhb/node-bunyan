@@ -20,17 +20,29 @@ var before = tap4nodeunit.before;
 var test = tap4nodeunit.test;
 
 
+// ---- globals
 
 var BUNYAN = path.resolve(__dirname, '../bin/bunyan');
 
-//child = exec('cat *.js bad_file | wc -l',
-//  function (error, stdout, stderr) {
-//    console.log('stdout: ' + stdout);
-//    console.log('stderr: ' + stderr);
-//    if (error !== null) {
-//      console.log('exec error: ' + error);
-//    }
-//});
+
+// ---- support stuff
+
+/**
+ * Copies over all keys in `from` to `to`, or
+ * to a new object if `to` is not given.
+ */
+function objCopy(from, to) {
+    if (to === undefined) {
+        to = {};
+    }
+    for (var k in from) {
+        to[k] = from[k];
+    }
+    return to;
+}
+
+
+// ---- tests
 
 test('--version', function (t) {
     var version = require('../package.json').version;
@@ -86,6 +98,53 @@ test('cat simple.log', function (t) {
         }
     );
 });
+
+// A stable 'TZ' for 'local' timezone output.
+tzEnv = objCopy(process.env);
+tzEnv.TZ = 'Pacific/Honolulu';
+
+test('time: simple.log local long', function (t) {
+    exec(_('%s -o long -L %s/corpus/simple.log', BUNYAN, __dirname),
+            {env: tzEnv}, function (err, stdout, stderr) {
+        t.ifError(err)
+        t.equal(stdout,
+            // JSSTYLED
+            '[2012-02-08T12:56:52.856-10:00]  INFO: myservice/123 on example.com: '
+            + 'My message\n');
+        t.end();
+    });
+});
+test('time: simple.log utc long', function (t) {
+    exec(_('%s -o long --time utc %s/corpus/simple.log', BUNYAN, __dirname),
+            {env: tzEnv}, function (err, stdout, stderr) {
+        t.ifError(err)
+        t.equal(stdout,
+            '[2012-02-08T22:56:52.856Z]  INFO: myservice/123 on example.com: '
+            + 'My message\n');
+        t.end();
+    });
+});
+test('time: simple.log local short', function (t) {
+    exec(_('%s -o short -L %s/corpus/simple.log', BUNYAN, __dirname),
+            {env: tzEnv}, function (err, stdout, stderr) {
+        t.ifError(err)
+        t.equal(stdout,
+            '12:56:52.856  INFO myservice: '
+            + 'My message\n');
+        t.end();
+    });
+});
+test('time: simple.log utc short', function (t) {
+    exec(_('%s -o short %s/corpus/simple.log', BUNYAN, __dirname),
+            {env: tzEnv}, function (err, stdout, stderr) {
+        t.ifError(err)
+        t.equal(stdout,
+            '22:56:52.856Z  INFO myservice: '
+            + 'My message\n');
+        t.end();
+    });
+});
+
 test('simple.log with color', function (t) {
     exec(_('%s --color %s/corpus/simple.log', BUNYAN, __dirname),
         function (err, stdout, stderr) {
@@ -421,6 +480,53 @@ test('should not crash on corpus/old-crashers/*.log', function (t) {
         }
     }, function (err, results) {
         t.ifError(err);
+        t.end();
+    });
+});
+
+test('client_req extra newlines, client_res={} (pull #252)', function (t) {
+    var expect = [
+        /* BEGIN JSSTYLED */
+        '[2016-02-10T07:28:40.510Z] TRACE: aclientreq/23280 on danger0.local: request sent',
+        '    GET /--ping HTTP/1.1',
+        '[2016-02-10T07:28:41.419Z] TRACE: aclientreq/23280 on danger0.local: Response received',
+        '    HTTP/1.1 200 OK',
+        '    request-id: e8a5a700-cfc7-11e5-a3dc-3b85d20f26ef',
+        '    content-type: application/json'
+        /* END JSSTYLED */
+    ].join('\n') + '\n';
+    exec(_('%s %s/corpus/clientreqres.log', BUNYAN, __dirname),
+            function (err, stdout, stderr) {
+        t.ifError(err);
+        t.equal(stdout, expect);
+        t.end();
+    });
+});
+
+test('should only show nonempty response bodies', function (t) {
+    var expect = [
+        /* BEGIN JSSTYLED */
+        '[2016-02-10T07:28:41.419Z]  INFO: myservice/123 on example.com: UnauthorizedError',
+        '    HTTP/1.1 401 Unauthorized',
+        '    content-type: text/plain',
+        '    date: Sat, 07 Mar 2015 06:58:43 GMT',
+        '[2016-02-10T07:28:41.419Z]  INFO: myservice/123 on example.com: hello',
+        '    HTTP/1.1 200 OK',
+        '    content-type: text/plain',
+        '    content-length: 0',
+        '    date: Sat, 07 Mar 2015 06:58:43 GMT',
+        '    ',
+        '    hello',
+        '[2016-02-10T07:28:41.419Z]  INFO: myservice/123 on example.com: UnauthorizedError',
+        '    HTTP/1.1 401 Unauthorized',
+        '    content-type: text/plain',
+        '    date: Sat, 07 Mar 2015 06:58:43 GMT'
+        /* END JSSTYLED */
+    ].join('\n') + '\n';
+    exec(_('%s %s/corpus/content-length-0-res.log', BUNYAN, __dirname),
+            function (err, stdout, stderr) {
+        t.ifError(err);
+        t.equal(stdout, expect);
         t.end();
     });
 });
